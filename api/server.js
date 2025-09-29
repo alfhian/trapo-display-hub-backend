@@ -15,7 +15,7 @@ const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const {
   PORT = 3000,
   DATABASE_URL,
-  CORS_ALLOWED_ORIGIN = 'https://app.yourdomain.com',
+  CORS_ALLOWED_ORIGIN = 'https://uncombated-nonvasculose-vanita.ngrok-free.dev',
   JWT_PUBLIC_KEY_PATH = path.join(__dirname, 'keys', 'jwt_public.pem')
 } = process.env;
 

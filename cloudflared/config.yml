@@ -1,9 +1,0 @@
-tunnel: tvdash-fatmawati
-credentials-file: C:\Users\Yunio\.cloudflared\tvdash-fatmawati.json
-
-ingress:
-  - hostname: app.yourdomain.com
-    service: http://localhost:3000
-  - hostname: api.yourdomain.com
-    service: http://localhost:3000
-  - service: http_status:404
