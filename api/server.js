@@ -14,13 +14,31 @@ const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
 const {
   PORT = 3000,
-  DATABASE_URL,
+  DATABASE_URL = process.env.DATABASE_URL,
   CORS_ALLOWED_ORIGIN = 'https://uncombated-nonvasculose-vanita.ngrok-free.dev',
   JWT_PUBLIC_KEY_PATH = path.join(__dirname, 'keys', 'jwt_public.pem')
 } = process.env;
 
 const { Pool } = pkg;
-const pool = new Pool({ connectionString: DATABASE_URL });
+const pool = new Pool({ connectionString: DATABASE_URL, application_name: 'tvdash-api' //check pg_stat 
+ });
+
+// Boot-time probe (non-fatal, with retry)
+(async () => {
+  let attempts = 0;
+  while (attempts < 5) {
+    try {
+      const r = await pool.query('select now() as ts, version() as v');
+      console.log('[DB] Connected:', r.rows[0].ts, '|', r.rows[0].v.split('\n')[0]);
+      return;
+    } catch (err) {
+      attempts++;
+      console.error(`[DB] Connection failed (attempt ${attempts}/5):`, err.message);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  console.warn('[DB] Still down after retries; continuing to serve HTTP. /health/db will show status.');
+})();
 
 // Cache in-memory untuk 1 node
 const memCache = new Map(); // screenId -> payload
@@ -32,6 +50,11 @@ app.use(cors({ origin: CORS_ALLOWED_ORIGIN }));
 
 // Serve halaman TV
 app.use('/screen', express.static(path.join(__dirname, '..', 'web')));
+
+// serve the same HTML for any id
+app.get('/screen/:id', (_req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'web', 'screen.html'));
+});
 
 // JWT admin middleware
 const publicKey = fs.readFileSync(JWT_PUBLIC_KEY_PATH, 'utf8');
@@ -128,3 +151,28 @@ io.on('connection', async (socket) => {
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 server.listen(PORT, () => console.log(`API+WEB listening on :${PORT}`));
+
+//list tables
+app.get('/debug/db-tables', async (_req, res) => {
+  try {
+    const r = await pool.query(`
+      select table_name
+      from information_schema.tables
+      where table_schema='public'
+      order by table_name
+    `);
+    res.json({ ok: true, tables: r.rows.map(x => x.table_name) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// aware health
+app.get('/health/db', async (_req, res) => {
+  try {
+    const r = await pool.query('select now() as now, current_database() as db, current_user as usr');
+    res.json({ ok: true, db: 'up', info: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, db: 'down', error: e.message });
+  }
+});

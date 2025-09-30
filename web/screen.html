@@ -34,7 +34,7 @@
   const segs = location.pathname.split('/').filter(Boolean);
   const screenId = segs[segs.length-1];
   const token = params.get('token');
-  const apiBase = 'https://api.yourdomain.com';
+   const apiBase = location.origin;
 
   async function loadCurrent(){
     try{
@@ -58,7 +58,7 @@
 
   loadCurrent();
   const socket = io(apiBase, {
-    transports: ['websocket'],
+    // transports: ['websocket'],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
