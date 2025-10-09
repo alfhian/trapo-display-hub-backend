@@ -9,6 +9,7 @@ import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
 import pkg from 'pg';
 import { Server } from 'socket.io';
+import authRoutes from '../src/routes/auth.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -18,6 +19,12 @@ const {
   CORS_ALLOWED_ORIGIN = 'https://uncombated-nonvasculose-vanita.ngrok-free.dev',
   JWT_PUBLIC_KEY_PATH = path.join(__dirname, 'keys', 'jwt_public.pem')
 } = process.env;
+
+const app = express();
+app.use(helmet());
+app.use(express.json({ limit: '256kb' }));
+app.use(cors({ origin: CORS_ALLOWED_ORIGIN }));
+app.use('/auth', authRoutes);
 
 const { Pool } = pkg;
 const pool = new Pool({ connectionString: DATABASE_URL, application_name: 'tvdash-api' //check pg_stat 
@@ -43,10 +50,21 @@ const pool = new Pool({ connectionString: DATABASE_URL, application_name: 'tvdas
 // Cache in-memory untuk 1 node
 const memCache = new Map(); // screenId -> payload
 
-const app = express();
-app.use(helmet());
-app.use(express.json({ limit: '256kb' }));
-app.use(cors({ origin: CORS_ALLOWED_ORIGIN }));
+// ====== JWT keys ======
+const privateKeyPath = path.join(__dirname, 'jwt_private.pem');          // in api/
+const publicKeyPath  = path.join(__dirname, 'keys', 'jwt_public.pem');   // in api/keys/
+
+let ADMIN_PRIVATE, ADMIN_PUBLIC;
+
+try {
+  ADMIN_PRIVATE = fs.readFileSync(privateKeyPath);
+  ADMIN_PUBLIC  = fs.readFileSync(publicKeyPath);
+  console.log('[JWT] Keys loaded.');
+} catch (err) {
+  console.error('[JWT] Failed to load key files:', err.message);
+}
+
+app.set('jwt_keys', { ADMIN_PRIVATE, ADMIN_PUBLIC });
 
 // Serve halaman TV
 app.use('/screen', express.static(path.join(__dirname, '..', 'web')));
