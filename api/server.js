@@ -10,6 +10,7 @@ import jwt from 'jsonwebtoken';
 import pkg from 'pg';
 import { Server } from 'socket.io';
 import authRoutes from '../src/routes/auth.js';
+import crypto from 'crypto';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -64,6 +65,12 @@ try {
   console.error('[JWT] Failed to load key files:', err.message);
 }
 
+function shortHash(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex').slice(0,16);
+}
+console.log('[JWT] private fingerprint:', shortHash(ADMIN_PRIVATE));
+console.log('[JWT] public  fingerprint:', shortHash(ADMIN_PUBLIC));
+
 app.set('jwt_keys', { ADMIN_PRIVATE, ADMIN_PUBLIC });
 
 // Serve halaman TV
@@ -75,16 +82,23 @@ app.get('/screen/:id', (_req, res) => {
 });
 
 // JWT admin middleware
-const publicKey = fs.readFileSync(JWT_PUBLIC_KEY_PATH, 'utf8');
 function requireAdmin(req, res, next) {
   try {
     const auth = req.headers.authorization || '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (!token) return res.status(401).json({ error: 'missing bearer token' });
-    const payload = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+
+    // Use the key stored on the app (already loaded at startup)
+    const { ADMIN_PUBLIC } = req.app.get('jwt_keys') || {};
+    if (!ADMIN_PUBLIC) return res.status(500).json({ error: 'server key missing' });
+
+    const payload = jwt.verify(token, ADMIN_PUBLIC, { algorithms: ['RS256'] });
+    if (payload.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+
     req.admin = payload;
     next();
-  } catch {
+  } catch (err) {
+    console.error('[requireAdmin]', err.message);
     return res.status(401).json({ error: 'invalid token' });
   }
 }
@@ -122,6 +136,17 @@ app.get('/screens/:id/current', async (req, res) => {
   }
 });
 
+// List all screens 
+app.get('/screens', requireAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, name FROM screens ORDER BY id');
+    res.json(rows);
+  } catch (e) {
+    console.error('List screens error:', e.message);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 // Admin assign
 app.post('/screens/:id/assign', requireAdmin, async (req, res) => {
   const { customer, plate, eta } = req.body || {};
@@ -133,6 +158,10 @@ app.post('/screens/:id/assign', requireAdmin, async (req, res) => {
     await persistPayload(req.params.id, payload, req.admin?.sub || 'admin');
     io.to(`screen:${req.params.id}`).emit('screen:update', { screenId: req.params.id, payload });
     res.json({ ok: true });
+    await pool.query(
+    'INSERT INTO assignment_logs (screen_id, user_id, payload) VALUES ($1, $2, $3)',
+    [req.params.id, req.admin?.sub || null, payload]
+);
   } catch {
     res.status(500).json({ error: 'server_error' });
   }
@@ -185,7 +214,7 @@ app.get('/debug/db-tables', async (_req, res) => {
   }
 });
 
-// aware health
+//aware health
 app.get('/health/db', async (_req, res) => {
   try {
     const r = await pool.query('select now() as now, current_database() as db, current_user as usr');
