@@ -147,14 +147,33 @@ app.get('/screens', requireAdmin, async (_req, res) => {
   }
 });
 
+app.get('/stats', requireAdmin, async (req, res) => {
+  try {
+    const r1 = await pool.query('SELECT COUNT(*) AS screens FROM screens');
+    const r2 = await pool.query('SELECT COUNT(*) AS users FROM users');
+    const r3 = await pool.query('SELECT COUNT(*) AS assignments FROM assignment_logs');
+    const r4 = await pool.query('SELECT MAX(created_at) AS last_update FROM assignment_logs');
+
+    res.json({
+      screens: parseInt(r1.rows[0].screens),
+      users: parseInt(r2.rows[0].users),
+      assignments: parseInt(r3.rows[0].assignments),
+      last_update: r4.rows[0].last_update
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 // Admin assign
 app.post('/screens/:id/assign', requireAdmin, async (req, res) => {
-  const { customer, plate, eta } = req.body || {};
+  const { customer, plate, eta, brand, type, service } = req.body || {};  
   if (!customer || !plate || !eta) {
     return res.status(400).json({ error: 'missing fields: customer, plate, eta' });
   }
   try {
-    const payload = { customer, plate, eta };
+    const payload = { customer, plate, eta, brand, type, service };
     await persistPayload(req.params.id, payload, req.admin?.sub || 'admin');
     io.to(`screen:${req.params.id}`).emit('screen:update', { screenId: req.params.id, payload });
     res.json({ ok: true });
@@ -213,6 +232,25 @@ app.get('/debug/db-tables', async (_req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+//screen history
+app.get('/screens/:id/history', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `SELECT id, payload, created_at
+       FROM assignment_logs
+       WHERE screen_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50`, [id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('screen history error:', e.message);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 
 //aware health
 app.get('/health/db', async (_req, res) => {
