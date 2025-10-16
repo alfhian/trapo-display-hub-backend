@@ -7,6 +7,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
 import pkg from 'pg';
 import { Server } from 'socket.io';
 import authRoutes from '../src/routes/auth.js';
@@ -17,19 +18,51 @@ const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const {
   PORT = 3000,
   DATABASE_URL = process.env.DATABASE_URL,
-  CORS_ALLOWED_ORIGIN = 'https://uncombated-nonvasculose-vanita.ngrok-free.dev',
-  JWT_PUBLIC_KEY_PATH = path.join(__dirname, 'keys', 'jwt_public.pem')
+  CORS_ALLOWED_ORIGIN, // no longer used for CORS, safe to remove later
+  JWT_PUBLIC_KEY_PATH = path.join(__dirname, 'keys', 'jwt_public.pem'),
+  // NEW: comma-separated list of allowed frontend origins
+  // e.g. FRONTEND_ORIGINS=http://localhost:5173,https://your-frontend.example.com
+  FRONTEND_ORIGINS = 'http://localhost:5173'
 } = process.env;
 
 const app = express();
+
+// --- Security & parsers
 app.use(helmet());
 app.use(express.json({ limit: '256kb' }));
-app.use(cors({ origin: CORS_ALLOWED_ORIGIN }));
+app.use(cookieParser());
+
+// --- CORS (REPLACED)
+// Build allowlist once, reuse for HTTP and Socket.IO
+const ALLOWED_ORIGINS = FRONTEND_ORIGINS.split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// Main CORS middleware (credentials + preflight friendly)
+app.use(
+  cors({
+    origin(origin, cb) {
+      // Allow no-origin (curl/Postman) and allowlisted origins
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: [], // add if you need to read custom headers on client
+  })
+);
+// Ensure OPTIONS preflights are answered
+app.options('*', cors());
+
+// ---- Routes
 app.use('/auth', authRoutes);
 
 const { Pool } = pkg;
-const pool = new Pool({ connectionString: DATABASE_URL, application_name: 'tvdash-api' //check pg_stat 
- });
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  application_name: 'tvdash-api' //check pg_stat
+});
 
 // Boot-time probe (non-fatal, with retry)
 (async () => {
@@ -88,7 +121,6 @@ function requireAdmin(req, res, next) {
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (!token) return res.status(401).json({ error: 'missing bearer token' });
 
-    // Use the key stored on the app (already loaded at startup)
     const { ADMIN_PUBLIC } = req.app.get('jwt_keys') || {};
     if (!ADMIN_PUBLIC) return res.status(500).json({ error: 'server key missing' });
 
@@ -136,7 +168,7 @@ app.get('/screens/:id/current', async (req, res) => {
   }
 });
 
-// List all screens 
+// List all screens
 app.get('/screens', requireAdmin, async (_req, res) => {
   try {
     const { rows } = await pool.query('SELECT id, name FROM screens ORDER BY id');
@@ -165,30 +197,40 @@ app.get('/stats', requireAdmin, async (req, res) => {
   }
 });
 
-
 // Admin assign
 app.post('/screens/:id/assign', requireAdmin, async (req, res) => {
-  const { customer, plate, eta, brand, type, service } = req.body || {};  
-  if (!customer || !plate || !eta) {
-    return res.status(400).json({ error: 'missing fields: customer, plate, eta' });
-  }
+  const { customerName, licensePlate, eta, brand, type, service } = req.body || {};
+  /*if (!customerName || !licensePlate || !eta) {
+    return res.status(400).json({ error: 'missing fields: customerName, licensePlate, eta' });
+  }*/
   try {
-    const payload = { customer, plate, eta, brand, type, service };
+    const payload = { customerName, licensePlate, eta, brand, type, service };
     await persistPayload(req.params.id, payload, req.admin?.sub || 'admin');
     io.to(`screen:${req.params.id}`).emit('screen:update', { screenId: req.params.id, payload });
     res.json({ ok: true });
     await pool.query(
-    'INSERT INTO assignment_logs (screen_id, user_id, payload) VALUES ($1, $2, $3)',
-    [req.params.id, req.admin?.sub || null, payload]
-);
+      'INSERT INTO assignment_logs (screen_id, user_id, payload) VALUES ($1, $2, $3)',
+      [req.params.id, req.admin?.sub || null, payload]
+    );
   } catch {
     res.status(500).json({ error: 'server_error' });
   }
 });
 
 const server = http.createServer(app);
+
+// --- Socket.IO with matching CORS (REPLACED)
 const io = new Server(server, {
-  cors: { origin: CORS_ALLOWED_ORIGIN, methods: ['GET', 'POST'] }
+  cors: {
+    origin(origin, cb) {
+      // Mirror HTTP CORS behavior
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(new Error(`Socket.IO CORS blocked for origin: ${origin}`));
+    },
+    methods: ['GET', 'POST'],
+    credentials: true,
+    allowedHeaders: ['Authorization']
+  }
 });
 
 io.use(async (socket, next) => {
@@ -250,7 +292,6 @@ app.get('/screens/:id/history', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'server_error' });
   }
 });
-
 
 //aware health
 app.get('/health/db', async (_req, res) => {

@@ -1,8 +1,14 @@
 Ngrok
 https://uncombated-nonvasculose-vanita.ngrok-free.dev
 
+Added account
+admin - heytrapo
+admin1 - 898989
 
 API
+
+Login Admin
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/auth/login
 
 Check Health API
 https://uncombated-nonvasculose-vanita.ngrok-free.dev/health
