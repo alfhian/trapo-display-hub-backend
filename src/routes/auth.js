@@ -2,16 +2,65 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import pkg from 'pg';
+import fs from 'fs';
+import path from 'path';
+import url from 'url';
+
 
 const router = express.Router();
 const { Pool } = pkg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+//register
+router.post("/register", async (req,res) => {
+  const { username, password, role = "user" } = req.body || {};
+  if (!username || !password)
+    return res.status(400).json({ error: "username/password required" });
+
+ try {
+    //ensure users table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        username text UNIQUE NOT NULL,
+        password_hash text NOT NULL,
+        role text DEFAULT 'user',
+        created_at timestamptz DEFAULT now()
+      );
+    `);
+
+     const { rows: exists } = await pool.query(
+      "SELECT 1 FROM users WHERE lower(username)=lower($1)",
+      [username]
+    );
+    if (exists.length)
+      return res.status(409).json({ error: "user_exists" });
+
+     const hash = await bcrypt.hash(password, 10);
+    const insert = await pool.query(
+      "INSERT INTO users (username,password_hash,role) VALUES ($1,$2,$3) RETURNING id,username,role",
+      [username, hash, role]
+    );
+
+    const user = insert.rows[0];
+    const token = signAccessToken(user);
+    res.json({
+      ok: true,
+      user: { id: user.id, username: user.username, role: user.role },
+      access_token: token,
+      token_type: "Bearer",
+    });
+  } catch (e) {
+    console.error("[register]", e.message);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 router.post('/login', async (req, res) => {
   try {
   const { username, password } = req.body;
 
-  /* basic check (fake user)
+  /*basic check (fake user)
   if (username !== 'admin' || password !== 'secret') {
     return res.status(401).json({ error: 'Invalid credentials' });
   }*/
@@ -64,5 +113,19 @@ router.post('/login', async (req, res) => {
     res.status(500).json({ error: 'server_error' });
   }
 });
+
+//verify current user
+router.get("/me", async (req, res) => {
+ try {
+  const auth = req.headers.authorization || "";
+  const token = aut.startsWith("Bearer ") ? auth.slice(7) : null;
+  if (!token) return res.status(401).json({error: "missing bearer token" });
+
+  const payload = jwt.verify(token, PublicKeyCredential, { algorithms: ["RS256"] });
+  res.json({ sub: payload.sub, username: payload.username, role: payload.role });
+ } catch (e) {
+  res.status(401).json({ error: "invalid token" });
+ }
+})
 
 export default router;
