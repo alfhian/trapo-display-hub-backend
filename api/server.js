@@ -34,27 +34,54 @@ app.use(cookieParser());
 
 // --- CORS (REPLACED)
 // Build allowlist once, reuse for HTTP and Socket.IO
-const ALLOWED_ORIGINS = FRONTEND_ORIGINS.split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+const ALLOWED_ORIGINS = [
+  ...FRONTEND_ORIGINS.split(',').map(s => s.trim()).filter(Boolean),
+  'https://uncombated-nonvasculose-vanita.ngrok-free.dev',
+];
+
+
+// === Helper: sign access token ===
+function signAccessToken(user) {
+  const payload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role || "user",
+  };
+  return jwt.sign(payload, privateKey, {
+    algorithm: "RS256",
+    expiresIn: "15m",
+    issuer: "tvdash",
+    audience: "tvdash-api",
+  });
+}
 
 // Main CORS middleware (credentials + preflight friendly)
 app.use(
   cors({
-    origin(origin, cb) {
-      // Allow no-origin (curl/Postman) and allowlisted origins
-      if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked for origin: ${origin}`));
+    origin(origin, callback) {
+      console.log('[CORS] Incoming Origin:', origin)
+      console.log('[CORS] Allowed Origins:', ALLOWED_ORIGINS)
+
+      // allow Postman / curl (no Origin header)
+      if (!origin) return callback(null, true)
+
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
+
+      return callback(new Error(`CORS blocked for origin: ${origin}`))
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    exposedHeaders: [], // add if you need to read custom headers on client
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    exposedHeaders: [],
+    optionsSuccessStatus: 200, // fix for Safari
   })
-);
-// Ensure OPTIONS preflights are answered
-app.options('*', cors());
+)
 
+
+
+// Ensure OPTIONS preflights are answered
+// ✅ handle preflight OPTIONS using the same CORS config
+app.options('*', cors());
 // ---- Routes
 app.use('/auth', authRoutes);
 
@@ -170,6 +197,9 @@ app.get('/screens/:id/current', async (req, res) => {
 
 // List all screens
 app.get('/screens', requireAdmin, async (_req, res) => {
+//  console.log("Request Origin:", origin)
+// console.log("Allowed Origins:", ALLOWED_ORIGINS)
+console.log("Request Origin:", _req.headers.origin);
   try {
     const { rows } = await pool.query('SELECT id, name FROM screens ORDER BY id');
     res.json(rows);
