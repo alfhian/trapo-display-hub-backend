@@ -1,0 +1,39 @@
+Ngrok
+https://uncombated-nonvasculose-vanita.ngrok-free.dev
+
+Added account
+admin - heytrapo
+admin1 - 898989
+
+API
+
+Login Admin
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/auth/login
+
+Check Health API
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/health
+
+Check Database Tables
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/debug/db-tables
+
+Check Database Health 
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/health/db
+
+Check Status
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/stats
+
+Serve HTML to id
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/screen/:id
+
+Cold Load TV (id diubah dari 1 - 4)
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/screens/00000000-0000-0000-0000-000000000001/current
+
+Check All TV
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/screens/
+
+Add to TV (id diubah dari 1 - 4)
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/screens/00000000-0000-0000-0000-000000000002/assign
+
+History Screen (id diubah dari 1 - 4)
+https://uncombated-nonvasculose-vanita.ngrok-free.dev/screens/00000000-0000-0000-0000-000000000001/history
+

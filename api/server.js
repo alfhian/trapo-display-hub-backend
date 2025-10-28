@@ -7,28 +7,89 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
 import pkg from 'pg';
 import { Server } from 'socket.io';
 import authRoutes from '../src/routes/auth.js';
+import crypto from 'crypto';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
 const {
   PORT = 3000,
   DATABASE_URL = process.env.DATABASE_URL,
-  CORS_ALLOWED_ORIGIN = 'https://uncombated-nonvasculose-vanita.ngrok-free.dev',
-  JWT_PUBLIC_KEY_PATH = path.join(__dirname, 'keys', 'jwt_public.pem')
+  CORS_ALLOWED_ORIGIN, // no longer used for CORS, safe to remove later
+  JWT_PUBLIC_KEY_PATH = path.join(__dirname, 'keys', 'jwt_public.pem'),
+  // NEW: comma-separated list of allowed frontend origins
+  // e.g. FRONTEND_ORIGINS=http://localhost:5173,https://your-frontend.example.com
+  FRONTEND_ORIGINS = 'http://localhost:5173'
 } = process.env;
 
 const app = express();
+
+// --- Security & parsers
 app.use(helmet());
 app.use(express.json({ limit: '256kb' }));
-app.use(cors({ origin: CORS_ALLOWED_ORIGIN }));
+app.use(cookieParser());
+
+// --- CORS (REPLACED)
+// Build allowlist once, reuse for HTTP and Socket.IO
+const ALLOWED_ORIGINS = [
+  ...FRONTEND_ORIGINS.split(',').map(s => s.trim()).filter(Boolean),
+  'https://uncombated-nonvasculose-vanita.ngrok-free.dev',
+];
+
+
+// === Helper: sign access token ===
+function signAccessToken(user) {
+  const payload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role || "user",
+  };
+  return jwt.sign(payload, privateKey, {
+    algorithm: "RS256",
+    expiresIn: "15m",
+    issuer: "tvdash",
+    audience: "tvdash-api",
+  });
+}
+
+// Main CORS middleware (credentials + preflight friendly)
+app.use(
+  cors({
+    origin(origin, callback) {
+      console.log('[CORS] Incoming Origin:', origin)
+      console.log('[CORS] Allowed Origins:', ALLOWED_ORIGINS)
+
+      // allow Postman / curl (no Origin header)
+      if (!origin) return callback(null, true)
+
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
+
+      return callback(new Error(`CORS blocked for origin: ${origin}`))
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    exposedHeaders: [],
+    optionsSuccessStatus: 200, // fix for Safari
+  })
+)
+
+
+
+// Ensure OPTIONS preflights are answered
+// ✅ handle preflight OPTIONS using the same CORS config
+app.options('*', cors());
+// ---- Routes
 app.use('/auth', authRoutes);
 
 const { Pool } = pkg;
-const pool = new Pool({ connectionString: DATABASE_URL, application_name: 'tvdash-api' //check pg_stat 
- });
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  application_name: 'tvdash-api' //check pg_stat
+});
 
 // Boot-time probe (non-fatal, with retry)
 (async () => {
@@ -64,6 +125,12 @@ try {
   console.error('[JWT] Failed to load key files:', err.message);
 }
 
+function shortHash(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex').slice(0,16);
+}
+console.log('[JWT] private fingerprint:', shortHash(ADMIN_PRIVATE));
+console.log('[JWT] public  fingerprint:', shortHash(ADMIN_PUBLIC));
+
 app.set('jwt_keys', { ADMIN_PRIVATE, ADMIN_PUBLIC });
 
 // Serve halaman TV
@@ -75,16 +142,22 @@ app.get('/screen/:id', (_req, res) => {
 });
 
 // JWT admin middleware
-const publicKey = fs.readFileSync(JWT_PUBLIC_KEY_PATH, 'utf8');
 function requireAdmin(req, res, next) {
   try {
     const auth = req.headers.authorization || '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (!token) return res.status(401).json({ error: 'missing bearer token' });
-    const payload = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+
+    const { ADMIN_PUBLIC } = req.app.get('jwt_keys') || {};
+    if (!ADMIN_PUBLIC) return res.status(500).json({ error: 'server key missing' });
+
+    const payload = jwt.verify(token, ADMIN_PUBLIC, { algorithms: ['RS256'] });
+    if (payload.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+
     req.admin = payload;
     next();
-  } catch {
+  } catch (err) {
+    console.error('[requireAdmin]', err.message);
     return res.status(401).json({ error: 'invalid token' });
   }
 }
@@ -122,25 +195,72 @@ app.get('/screens/:id/current', async (req, res) => {
   }
 });
 
+// List all screens
+app.get('/screens', requireAdmin, async (_req, res) => {
+//  console.log("Request Origin:", origin)
+// console.log("Allowed Origins:", ALLOWED_ORIGINS)
+console.log("Request Origin:", _req.headers.origin);
+  try {
+    const { rows } = await pool.query('SELECT id, name FROM screens ORDER BY id');
+    res.json(rows);
+  } catch (e) {
+    console.error('List screens error:', e.message);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+app.get('/stats', requireAdmin, async (req, res) => {
+  try {
+    const r1 = await pool.query('SELECT COUNT(*) AS screens FROM screens');
+    const r2 = await pool.query('SELECT COUNT(*) AS users FROM users');
+    const r3 = await pool.query('SELECT COUNT(*) AS assignments FROM assignment_logs');
+    const r4 = await pool.query('SELECT MAX(created_at) AS last_update FROM assignment_logs');
+
+    res.json({
+      screens: parseInt(r1.rows[0].screens),
+      users: parseInt(r2.rows[0].users),
+      assignments: parseInt(r3.rows[0].assignments),
+      last_update: r4.rows[0].last_update
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 // Admin assign
 app.post('/screens/:id/assign', requireAdmin, async (req, res) => {
-  const { customer, plate, eta } = req.body || {};
-  if (!customer || !plate || !eta) {
-    return res.status(400).json({ error: 'missing fields: customer, plate, eta' });
-  }
+  const { customerName, licensePlate, eta, brand, type, service } = req.body || {};
+  /*if (!customerName || !licensePlate || !eta) {
+    return res.status(400).json({ error: 'missing fields: customerName, licensePlate, eta' });
+  }*/
   try {
-    const payload = { customer, plate, eta };
+    const payload = { customerName, licensePlate, eta, brand, type, service };
     await persistPayload(req.params.id, payload, req.admin?.sub || 'admin');
     io.to(`screen:${req.params.id}`).emit('screen:update', { screenId: req.params.id, payload });
     res.json({ ok: true });
+    await pool.query(
+      'INSERT INTO assignment_logs (screen_id, user_id, payload) VALUES ($1, $2, $3)',
+      [req.params.id, req.admin?.sub || null, payload]
+    );
   } catch {
     res.status(500).json({ error: 'server_error' });
   }
 });
 
 const server = http.createServer(app);
+
+// --- Socket.IO with matching CORS (REPLACED)
 const io = new Server(server, {
-  cors: { origin: CORS_ALLOWED_ORIGIN, methods: ['GET', 'POST'] }
+  cors: {
+    origin(origin, cb) {
+      // Mirror HTTP CORS behavior
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(new Error(`Socket.IO CORS blocked for origin: ${origin}`));
+    },
+    methods: ['GET', 'POST'],
+    credentials: true,
+    allowedHeaders: ['Authorization']
+  }
 });
 
 io.use(async (socket, next) => {
@@ -185,7 +305,25 @@ app.get('/debug/db-tables', async (_req, res) => {
   }
 });
 
-// aware health
+//screen history
+app.get('/screens/:id/history', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `SELECT id, payload, created_at
+       FROM assignment_logs
+       WHERE screen_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50`, [id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('screen history error:', e.message);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+//aware health
 app.get('/health/db', async (_req, res) => {
   try {
     const r = await pool.query('select now() as now, current_database() as db, current_user as usr');
