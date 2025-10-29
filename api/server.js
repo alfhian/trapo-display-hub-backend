@@ -164,7 +164,7 @@ function requireAdmin(req, res, next) {
 
 async function getLatestPayload(screenId) {
   if (memCache.has(screenId)) return memCache.get(screenId);
-  const { rows } = await pool.query('select payload from screen_payloads where screen_id = $1', [screenId]);
+  const { rows } = await pool.query('select payload from screen_display where screen_id = $1', [screenId]);
   const payload = rows[0]?.payload || null;
   if (payload) memCache.set(screenId, payload);
   return payload;
@@ -172,15 +172,10 @@ async function getLatestPayload(screenId) {
 
 async function persistPayload(screenId, payload, actor = 'admin') {
   await pool.query(`
-    insert into screen_payloads (screen_id, payload, updated_at)
+    insert into screen_display (screen_id, payload, updated_at)
     values ($1, $2, now())
     on conflict (screen_id) do update set payload = excluded.payload, updated_at = now()
   `, [screenId, payload]);
-
-  await pool.query(`
-    insert into assignment_events (screen_id, payload, actor)
-    values ($1, $2, $3)
-  `, [screenId, payload, actor]);
 
   memCache.set(screenId, payload);
 }
@@ -213,8 +208,8 @@ app.get('/stats', requireAdmin, async (req, res) => {
   try {
     const r1 = await pool.query('SELECT COUNT(*) AS screens FROM screens');
     const r2 = await pool.query('SELECT COUNT(*) AS users FROM users');
-    const r3 = await pool.query('SELECT COUNT(*) AS assignments FROM assignment_logs');
-    const r4 = await pool.query('SELECT MAX(created_at) AS last_update FROM assignment_logs');
+    const r3 = await pool.query('SELECT COUNT(*) AS assignments FROM logs');
+    const r4 = await pool.query('SELECT MAX(created_at) AS last_update FROM logs');
 
     res.json({
       screens: parseInt(r1.rows[0].screens),
@@ -239,7 +234,7 @@ app.post('/screens/:id/assign', requireAdmin, async (req, res) => {
     io.to(`screen:${req.params.id}`).emit('screen:update', { screenId: req.params.id, payload });
     res.json({ ok: true });
     await pool.query(
-      'INSERT INTO assignment_logs (screen_id, user_id, payload) VALUES ($1, $2, $3)',
+      'INSERT INTO logs (screen_id, user_id, payload) VALUES ($1, $2, $3)',
       [req.params.id, req.admin?.sub || null, payload]
     );
   } catch {
@@ -311,7 +306,7 @@ app.get('/screens/:id/history', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const { rows } = await pool.query(
       `SELECT id, payload, created_at
-       FROM assignment_logs
+       FROM logs
        WHERE screen_id = $1
        ORDER BY created_at DESC
        LIMIT 50`, [id]
