@@ -1,26 +1,49 @@
-import dotenv from 'dotenv'
-dotenv.config()
+import express from 'express'
+import http from 'http'
+import { Server } from 'socket.io'
+import cors from 'cors'
+import screenRoutes from './routes/screen-routes.js'
+import loginRoutes from './routes/auth-routes.js'
 
-// import modul lain SETELAH dotenv selesai
-const startServer = async () => {
-  const express = (await import('express')).default
-  const cors = (await import('cors')).default
-  const screenRoutes = (await import('./routes/screen-routes.js')).default
-  const loginRoutes = (await import('./routes/auth-routes.js')).default
+const app = express()
+const server = http.createServer(app)
 
-  const app = express()
-  app.use(cors({
-    origin: ['http://localhost:5173', 'http://103.75.26.86:5173'],
+export const io = new Server(server, {
+  cors: {
+    origin: [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'https://uncombated-nonvasculose-vanita.ngrok-free.dev'
+    ],
+    methods: ['GET', 'POST', 'PATCH'],
     credentials: true,
-  }))
-  app.use(express.json())
+  },
+})
 
-  app.use('/api/auth', loginRoutes)
-  app.use('/api', screenRoutes)
+app.use(cors())
+app.use(express.json())
 
-  const PORT = process.env.PORT || 3000
-  console.log('🌐 DATABASE_URL:', process.env.DATABASE_URL)
-  app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`))
-}
+// ⚠️ API routes di bawah ini
+app.use('/api/auth', loginRoutes)
+app.use('/api', screenRoutes)
 
-startServer()
+// ⚙️ Socket event
+io.on('connection', (socket) => {
+  console.log('🟢 Socket connected:', socket.id)
+
+  socket.on('join_screen', (screenId) => {
+    socket.join(`screen:${screenId}`)
+    console.log(`📺 ${socket.id} joined room: screen:${screenId}`)
+  })
+
+  socket.on('disconnect', () => {
+    console.log(`🔴 Socket disconnected: ${socket.id}`)
+  })
+})
+
+io.engine.on('connection', (rawSocket) => {
+  console.log('🌐 Engine.io handshake from:', rawSocket.request.headers.origin)
+})
+
+const PORT = process.env.PORT || 3000
+server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`))
