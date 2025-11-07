@@ -51,7 +51,6 @@ router.post("/register", async (req, res) => {
     return res.status(400).json({ error: "username/password required" });
 
   try {
-    // ensure users table exists
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -70,24 +69,23 @@ router.post("/register", async (req, res) => {
       return res.status(409).json({ error: "user_exists" });
 
     const hash = await bcrypt.hash(password, 10);
-    const insert = await pool.query(
-      "INSERT INTO users (username,password_hash,role) VALUES ($1,$2,$3) RETURNING id,username,role",
+    const { rows } = await pool.query(
+      "INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id, username, role",
       [username, hash, role]
     );
 
-        const user = insert.rows[0];
-    // try to get the private key from main app if available
-    const { ADMIN_PRIVATE } = req.app.get("jwt_keys") || {};
-    const token = signAccessToken(user, ADMIN_PRIVATE);
-    res.json({
+    const user = rows[0];
+    const token = signAccessToken(user, getPrivateKey(req));
+
+    return res.json({
       ok: true,
       user: { id: user.id, username: user.username, role: user.role },
       access_token: token,
       token_type: "Bearer",
     });
   } catch (e) {
-    console.error("[register]", e.message);
-    res.status(500).json({ error: "server_error" });
+    console.error("[register]", e);
+    return res.status(500).json({ error: "internal_server_error" });
   }
 });
 
