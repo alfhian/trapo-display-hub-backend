@@ -63,11 +63,11 @@ export const removeDisplay = async (req, res) => {
   try {
     const adminId = req.user?.id || '00000000-0000-0000-0000-000000000000'
 
-    const result = await removeDisplayService({ screenDisplayId: id, adminId })
+    const result = await removeDisplayService({ targetId: id, adminId })
 
     return res.status(200).json({
       ok: true,
-      message: 'Display deactivated successfully',
+      message: 'Screen displays deactivated successfully',
       data: result,
     })
   } catch (error) {

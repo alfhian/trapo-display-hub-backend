@@ -1,24 +1,26 @@
-// middleware/auth.js
 import jwt from 'jsonwebtoken'
 
-// Ambil secret dari environment
-const JWT_SECRET = process.env.JWT_SECRET || 'default_secret_key'
+const getJwtSecret = () => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is not configured')
+  }
+  return process.env.JWT_SECRET
+}
 
-// Middleware umum: cek apakah user login
-export const requireAuth = (req, res, next) => {
+const getBearerToken = (req) => {
   const authHeader = req.headers.authorization
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null
+  return authHeader.split(' ')[1]
+}
 
-  // Pastikan token ada dan formatnya benar
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+export const requireAuth = (req, res, next) => {
+  const token = getBearerToken(req)
+  if (!token) {
     return res.status(401).json({ error: 'missing_or_invalid_token' })
   }
 
-  const token = authHeader.split(' ')[1]
-
   try {
-    // Verifikasi token
-    const decoded = jwt.verify(token, JWT_SECRET)
-    req.user = decoded // Simpan data user ke request
+    req.user = jwt.verify(token, getJwtSecret())
     next()
   } catch (error) {
     console.error('JWT verification failed:', error.message)
@@ -26,20 +28,15 @@ export const requireAuth = (req, res, next) => {
   }
 }
 
-// Middleware khusus admin
 export const requireAdmin = (req, res, next) => {
-  const authHeader = req.headers.authorization
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const token = getBearerToken(req)
+  if (!token) {
     return res.status(401).json({ error: 'missing_or_invalid_token' })
   }
 
-  const token = authHeader.split(' ')[1]
-
   try {
-    const decoded = jwt.verify(token, JWT_SECRET)
-
-    if ((decoded.role !== 'admin')) {
+    const decoded = jwt.verify(token, getJwtSecret())
+    if (decoded.role !== 'admin') {
       return res.status(403).json({ error: 'forbidden' })
     }
 

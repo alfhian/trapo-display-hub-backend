@@ -1,6 +1,11 @@
 {
   "type": "module",
   "name": "trapo-fatmawati-api",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "check": "node --check server.js"
+  },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
     "bcrypt": "^6.0.0",
