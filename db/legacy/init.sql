@@ -1,3 +1,6 @@
+-- Superseded by trapo-display-hub-backend/db/migrations/ (see db/migrate.js).
+-- Kept for historical reference only; not executed by any tooling.
+
 create extension if not exists pgcrypto;
 
 create table if not exists screens (

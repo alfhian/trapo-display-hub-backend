@@ -1,3 +1,8 @@
+-- Superseded by trapo-display-hub-backend/db/migrations/ (see db/migrate.js).
+-- Kept for historical reference only; not executed by any tooling.
+-- This is the pg_dump that db/migrations/0001_baseline_schema.sql and
+-- 0002_screen_display_reconstruction.sql were derived from.
+
 --
 -- PostgreSQL database dump
 --

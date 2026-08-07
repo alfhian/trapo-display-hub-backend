@@ -4,7 +4,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js",
+    "migrate": "node db/migrate.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
